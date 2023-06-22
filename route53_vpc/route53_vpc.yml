@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create a Route 53 internal hosted DNS zone, VPC, subnet, security group, DHCP options set, and KMS key
+
+Parameters:
+  HostedZoneName:
+    Type: String
+    Description: Name for the internal hosted DNS zone
+
+  VpcCidrBlock:
+    Type: String
+    Description: CIDR block for the VPC
+    Default: 10.0.0.0/16
+
+  SubnetCidrBlock:
+    Type: String
+    Description: CIDR block for the subnet
+    Default: 10.0.0.0/24
+
+  KeyAlias:
+    Type: String
+    Description: Alias for the new multi-region customer managed KMS key
+
+Resources:
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref HostedZoneName
+      HostedZoneConfig:
+        Comment: Internal DNS zone
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidrBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref SubnetCidrBlock
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group allowing SSH and HTTPS access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  DHCPOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: !Ref HostedZone
+      DomainNameServers:
+        - !Ref HostedZone
+      NtpServers:
+        - 0.amazon.pool.ntp.org
+        - 1.amazon.pool.ntp.org
+        - 2.amazon.pool.ntp.org
+        - 3.amazon.pool.ntp.org
+
+  DHCPOptionsAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      VpcId: !Ref VPC
+      DhcpOptionsId: !Ref DHCPOptions
+
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Multi-region customer managed key
+      KeyUsage: ENCRYPT_DECRYPT
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - kms:*
+            Resource: '*'
+
+  KMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/!Ref KeyAlias
+      TargetKeyId: !Ref KMSKey
+
+Outputs:
+  HostedZoneId:
+    Description: ID of the Route 53 internal hosted DNS zone
+    Value: !Ref HostedZone
+
+  VpcId:
+    Description: ID of the VPC
+    Value: !Ref VPC
+
+  SubnetId:
+    Description: ID of the subnet
+    Value: !Ref Subnet
+
+  SecurityGroupId:
+    Description: ID of the security group
+    Value: !Ref SecurityGroup
+
+  KMSKeyId:
+    Description: ID of the KMS key
+    Value: !Ref KMSKey
