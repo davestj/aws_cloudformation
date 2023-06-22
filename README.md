@@ -75,7 +75,6 @@ For more information about Route 53, refer to the [Amazon Route 53 Documentation
 
 For more information about VPCs, refer to the [Amazon VPC Documentation](https://docs.aws.amazon.com/vpc/).
 
-For more information about KMS
 --------------------------------------
 # EKS Cluster CloudFormation Template
 
