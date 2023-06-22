@@ -52,6 +52,27 @@ Parameters:
     Type: String
     Description: demoapp name
 
+  HealthCheckInterval:
+    Type: Number
+    Default: 30
+    Description: Health check interval (in seconds) for the ELB
+
+  Route53HostedZoneName:
+    Type: String
+    Description: Root domain name for the Route 53 hosted zone
+
+  SubdomainName:
+    Type: String
+    Description: Subdomain name to add/update in the Route 53 hosted zone
+
+  Monitoring:
+    Type: String
+    Description: Whether to enable detailed monitoring (true or false)
+    Default: false
+    AllowedValues:
+      - true
+      - false
+      -
 Resources:
   MyEC2Instance:
     Type: AWS::EC2::Instance
@@ -64,6 +85,8 @@ Resources:
           Ebs:
             VolumeSize: !Ref DiskSize
             VolumeType: !Ref DiskType
+            Encrypted: true
+      Monitoring: !Ref Monitoring
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
@@ -141,8 +164,31 @@ Resources:
           #!/bin/bash
           aws s3 cp "s3://${ArtifactBucket}/${Artifact} /var/www/nginx/${Artifact}"
 
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the EC2 instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
 
 Outputs:
+  InstanceId:
+    Description: ID of the created EC2 instance
+    Value: !Ref MyEC2Instance
   LoadBalancerDNSName:
     Description: DNS name of the load balancer
-    Value: !GetAtt MyLoadBalancer.DNSName
+    Value: !GetAtt MyLoadBalancer.DNSNamee
+  FullUrl:
+    Description: Full URL with subdomain
+    Value: !Sub "http://${SubDomain}.${HostedZoneId}"
