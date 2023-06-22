@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Full-Featured EC2 Instance with ELB and ASG
+
+Parameters:
+  AMIId:
+    Type: AWS::EC2::Image::Id
+    Description: ID of the AMI to use for the EC2 instances
+
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 instance type
+
+  MinInstances:
+    Type: Number
+    Default: 1
+    Description: Minimum number of instances in the Auto Scaling Group
+
+  MaxInstances:
+    Type: Number
+    Default: 3
+    Description: Maximum number of instances in the Auto Scaling Group
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of the key pair for SSH access
+
+  DiskSize:
+    Type: Number
+    Default: 8
+    Description: Size of the root disk in GB
+
+  DiskType:
+    Type: String
+    Default: gp2
+    Description: Type of the root disk
+
+  EnableEncryption:
+    Type: String
+    Default: false
+    Description: Enable encryption for the ELB and ASG
+
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket name containing the artifact
+
+  Artifact:
+    Type: String
+    Description: artifact file to copy from s3 bucket
+
+  NodeJSAppName:
+    Type: String
+    Description: demoapp name
+
+Resources:
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AMIId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref DiskSize
+            VolumeType: !Ref DiskType
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install -y nginx
+          aws s3 cp "s3://${ArtifactBucket}/${Artifact} /var/www/nginx/${Artifact}"
+          unzip "/var/www/nginx/${Artifact} -d /var/www/nginx/${NodeJSAppName}"
+          service nginx start
+
+
+  MyLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: MyLoadBalancer
+      Subnets:
+        - !Ref MySubnet1
+        - !Ref MySubnet2
+      SecurityGroups:
+        - !Ref MySecurityGroup
+      Scheme: internet-facing
+      Tags:
+        - Key: Name
+          Value: MyLoadBalancer
+
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: MyTargetGroup
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref MyVPC
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      TargetType: instance
+
+  MyListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MyLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+
+  MyAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: MyAutoScalingGroup
+      LaunchConfigurationName: !Ref MyLaunchConfiguration
+      MinSize: !Ref MinInstances
+      MaxSize: !Ref MaxInstances
+      DesiredCapacity: !Ref MinInstances
+      VPCZoneIdentifier:
+        - !Ref MySubnet1
+        - !Ref MySubnet2
+      Tags:
+        - Key: Name
+          Value: MyAutoScalingGroup
+          PropagateAtLaunch: true
+
+  MyLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      LaunchConfigurationName: MyLaunchConfiguration
+      ImageId: !Ref AMIId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          aws s3 cp "s3://${ArtifactBucket}/${Artifact} /var/www/nginx/${Artifact}"
+
+
+Outputs:
+  LoadBalancerDNSName:
+    Description: DNS name of the load balancer
+    Value: !GetAtt MyLoadBalancer.DNSName
