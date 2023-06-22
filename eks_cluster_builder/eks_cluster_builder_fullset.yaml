@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create a full-featured EKS cluster
+
+Parameters:
+  ClusterName:
+    Type: String
+    Description: Name of the EKS cluster
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: ID of the VPC in which to create the EKS cluster
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of subnet IDs for the EKS cluster
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of the SSH key pair to associate with the EKS cluster instances
+
+  ClusterVersion:
+    Type: String
+    Description: Version of the EKS cluster
+    Default: 1.20
+
+  DesiredCapacity:
+    Type: Number
+    Description: Desired number of worker nodes in the EKS cluster
+    Default: 2
+
+  MaxSize:
+    Type: Number
+    Description: Maximum number of worker nodes in the EKS cluster
+    Default: 3
+
+  MinSize:
+    Type: Number
+    Description: Minimum number of worker nodes in the EKS cluster
+    Default: 1
+
+  InstanceType:
+    Type: String
+    Description: EC2 instance type for the worker nodes
+    Default: t3.medium
+
+Resources:
+  ClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ClusterName}-ClusterRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+
+  ClusterRoleAttachment:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${ClusterName}-ClusterRoleAttachment
+      Roles:
+        - !Ref ClusterRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - eks:DescribeCluster
+              - eks:DescribeNodegroup
+              - eks:ListNodegroups
+              - eks:CreateNodegroup
+              - eks:UpdateNodegroupVersion
+              - eks:DeleteNodegroup
+            Resource: '*'
+
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref ClusterVersion
+      RoleArn: !GetAtt ClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref ControlPlaneSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Ref ClusterName
+
+  EKSNodeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ClusterName}-NodeInstanceRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  EKSNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${ClusterName}-NodeInstanceProfile
+      Roles:
+        - !Ref EKSNodeInstanceRole
+
+  ControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the EKS cluster control plane
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  NodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the EKS cluster worker nodes
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  ClusterAutoScaler:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub ${ClusterName}-AutoScaler
+      DesiredCapacity: !Ref DesiredCapacity
+      MaxSize: !Ref MaxSize
+      MinSize: !Ref MinSize
+      VPCZoneIdentifier: !Ref SubnetIds
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WorkerNodeLaunchTemplate
+        Version: !GetAtt WorkerNodeLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-AutoScaler
+          PropagateAtLaunch: 'true'
+
+  WorkerNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${ClusterName}-WorkerNodeLaunchTemplate
+      LaunchTemplateData:
+        ImageId: !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", EKS-1.20-xxx]
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyPairName
+        SecurityGroupIds:
+          - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !GetAtt EKSNodeInstanceProfile.Arn
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            echo "kubelet --max-pods 100" >> /etc/sysconfig/kubelet
+      TagSpecifications:
+        - ResourceType: instance
+          Tags:
+            - Key: Name
+              Value: !Sub ${ClusterName}-WorkerNode
+
+Mappings:
+  AWSRegionToAMI:
+    us-east-1:
+      EKS-1.20-xxx: ami-xxx
+    us-west-2:
+      EKS-1.20-xxx: ami-xxx
+    # Add other regions and corresponding EKS AMI IDs as needed
+
+Outputs:
+  ClusterNameOutput:
+    Description: Name of the EKS cluster
+    Value: !Ref ClusterName
+
+  ClusterEndpoint:
+    Description: Endpoint URL of the EKS cluster
+    Value: !GetAtt EKSCluster.Endpoint
+
+  ClusterArn:
+    Description: ARN of the EKS cluster
+    Value: !GetAtt EKSCluster.Arn
+
+  WorkerNodeSecurityGroupId:
+    Description: ID of the security group for the worker nodes
+    Value: !Ref NodeSecurityGroup
+
+  WorkerNodeIAMRoleArn:
+    Description: ARN of the IAM role for the worker nodes
+    Value: !GetAtt EKSNodeInstanceRole.Arn
