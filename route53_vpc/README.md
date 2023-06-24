@@ -4,6 +4,8 @@ This CloudFormation template creates a Route 53 internal hosted DNS zone, VPC, s
 
 ## Prerequisites
 
+
+
 - An AWS account
 - Basic knowledge of AWS CloudFormation and networking concepts
 
